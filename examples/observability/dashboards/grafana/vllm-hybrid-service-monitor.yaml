@@ -1,0 +1,43 @@
+## 这个在worker集群上执行
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-external
+  namespace: insight-system          # Same namespace as your Prometheus instance
+  labels:
+    app: vllm-external
+spec:
+  ports:
+    - name: metrics
+      port: 8000
+      protocol: TCP
+  clusterIP: None
+
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: vllm-external
+  namespace: insight-system
+subsets:
+  - addresses:
+      - ip: 10.70.44.16        # <-- Replace with your vLLM host IP
+    ports:
+      - name: metrics
+        port: 8000
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm-external-metrics
+  namespace: insight-system
+  labels:
+    operator.insight.io/managed-by: insight
+spec:
+  selector:
+    matchLabels:
+      app: vllm-external
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 5s

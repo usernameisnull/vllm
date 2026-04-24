@@ -1,0 +1,160 @@
+# Complete end-to-end example for deploying vLLM with Grafana Dashboard on Kubernetes
+#
+# This manifest includes:
+#   1. vLLM Deployment + Service (exposes metrics at :8000/metrics)
+#   2. ServiceMonitor (tells Prometheus Operator to scrape vLLM metrics)
+#   3. GrafanaDatasource (connects Grafana to Prometheus)
+#   4. GrafanaDashboard (imports vLLM dashboards via URL)
+#
+# Prerequisites:
+#   - Grafana Operator v5+ installed
+#   - Prometheus Operator (kube-prometheus-stack) installed
+#   - GPU nodes available (or use CPU image for testing)
+#
+# Usage:
+#   1. Review and update namespace, labels, and image references below.
+#   2. Apply: kubectl apply -f complete-deployment-example.yaml -n <namespace>
+#   3. Verify vLLM is ready: kubectl get pods -n <namespace>
+#   4. Check metrics endpoint: kubectl port-forward svc/vllm-server 8000:8000
+#      then curl http://localhost:8000/metrics
+#   5. Access Grafana and confirm dashboards appear under "vLLM Monitoring" folder.
+
+---
+# ------------------------------------------------------------------------------
+# 1. vLLM Deployment
+# ------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-server
+  labels:
+    app: vllm-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-server
+  template:
+    metadata:
+      labels:
+        app: vllm-server
+    spec:
+      # If using GPU, ensure nodes have nvidia.com/gpu resource.
+      # For CPU-only testing, change image to vllm/vllm-cpu-env:latest
+      # and remove the nvidia.com/gpu limit.
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          ports:
+            - name: http
+              containerPort: 8000
+          args:
+            - --model
+            - "Qwen/Qwen2.5-0.5B-Instruct"
+            - --max-model-len
+            - "2048"
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+          # Mount HuggingFace cache if you want to avoid re-downloading models.
+          # volumeMounts:
+          #   - name: hf-cache
+          #     mountPath: /root/.cache/huggingface
+      # volumes:
+      #   - name: hf-cache
+      #     emptyDir: {}
+
+---
+# ------------------------------------------------------------------------------
+# 2. vLLM Service
+# ------------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-server
+  labels:
+    app: vllm-server
+spec:
+  selector:
+    app: vllm-server
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+
+---
+# ------------------------------------------------------------------------------
+# 3. ServiceMonitor (Prometheus Operator discovers and scrapes vLLM metrics)
+# ------------------------------------------------------------------------------
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm-metrics
+  labels:
+    app: vllm-server
+spec:
+  selector:
+    matchLabels:
+      app: vllm-server
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 5s
+      scrapeTimeout: 5s
+
+---
+# ------------------------------------------------------------------------------
+# 4. GrafanaDatasource (connects Grafana to in-cluster Prometheus)
+# ------------------------------------------------------------------------------
+# Adjust the URL to match your actual Prometheus service.
+# Common URLs:
+#   - kube-prometheus-stack: http://prometheus-k8s.monitoring.svc.cluster.local:9090
+#   - prometheus helm chart:   http://prometheus-server.monitoring.svc.cluster.local
+# ------------------------------------------------------------------------------
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: prometheus
+spec:
+  datasource:
+    name: Prometheus
+    type: prometheus
+    url: http://prometheus-k8s.monitoring.svc.cluster.local:9090
+    access: proxy
+    isDefault: true
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+
+---
+# ------------------------------------------------------------------------------
+# 5. GrafanaDashboard - Performance Statistics (via URL)
+# ------------------------------------------------------------------------------
+# If you are in an air-gapped environment, switch to ConfigMap + configMapRef
+# as described in grafana-operator-deployment.md.
+# ------------------------------------------------------------------------------
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: vllm-performance-dashboard
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folder: "vLLM Monitoring"
+  url: "https://raw.githubusercontent.com/vllm-project/vllm/main/examples/observability/dashboards/grafana/performance_statistics.json"
+
+---
+# ------------------------------------------------------------------------------
+# 6. GrafanaDashboard - Query Statistics (via URL)
+# ------------------------------------------------------------------------------
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: vllm-query-dashboard
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folder: "vLLM Monitoring"
+  url: "https://raw.githubusercontent.com/vllm-project/vllm/main/examples/observability/dashboards/grafana/query_statistics.json"
