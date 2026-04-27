@@ -4,6 +4,7 @@ kind: GrafanaDashboard
 metadata:
   name: vllm-performance-dashboard
   namespace: insight-system
+  # 这个label很重要,能否被operator纳管识别就靠他了
   labels:
     operator.insight.io/managed-by: insight
 spec:
